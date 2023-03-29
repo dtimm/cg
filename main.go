@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/jessevdk/go-flags"
 	"github.com/sashabaranov/go-openai"
@@ -21,21 +22,12 @@ func main() {
 	var opt options
 	flags.Parse(&opt)
 
-	client := openai.NewClient(opt.APIToken)
-
-	if opt.OutFile != "" {
-		f, err := os.Stat(opt.OutFile)
-	}
-
-	printIt := func(s string) {
-		fmt.Println(s)
-
-	}
-	var messages []openai.ChatCompletionMessage
 	var err error
 
+	client := openai.NewClient(opt.APIToken)
+
 	if opt.Interactive {
-		messages, err = interactive(client)
+		err = interactive(client, opt.OutFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s", err)
 		}
@@ -45,11 +37,23 @@ func main() {
 			fmt.Fprintf(os.Stderr, "%s", err)
 		}
 
-		messages = []openai.ChatCompletionMessage{resp}
+		fmt.Fprintf(os.Stdout, resp.Content)
+		writeFile(opt.OutFile, resp.Content)
 	}
 
-	fmt.Printf("\n\n\n%#v\n\n", messages)
 	os.Exit(0)
+}
+
+func writeFile(outFile, text string) error {
+	f, err := os.OpenFile(outFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("cannot open file: %s", err)
+	}
+
+	defer f.Close()
+	fmt.Fprintln(f, text)
+
+	return nil
 }
 
 func packageUserPrompt(p string) openai.ChatCompletionMessage {
@@ -75,12 +79,26 @@ func single(c *openai.Client, p string) (openai.ChatCompletionMessage, error) {
 	return resp.Choices[0].Message, nil
 }
 
-func interactive(c *openai.Client) ([]openai.ChatCompletionMessage, error) {
+func interactive(c *openai.Client, outFile string) error {
 	messages := []openai.ChatCompletionMessage{}
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		fmt.Printf("user: ")
-		m := packageUserPrompt(scanner.Text())
+
+	fmt.Print("user: ")
+	for {
+		scanner := bufio.NewScanner(os.Stdin)
+		var inputLines []string
+		for scanner.Scan() {
+			line := scanner.Text()
+			if len(line) == 0 {
+				break
+			}
+			inputLines = append(inputLines, line)
+			t := scanner.Text()
+			writeFile(outFile, fmt.Sprintf("user: %s", t))
+		}
+
+		t := strings.Join(inputLines, "\n")
+
+		m := packageUserPrompt(t)
 		messages = append(messages, m)
 		resp, err := c.CreateChatCompletion(
 			context.Background(),
@@ -89,12 +107,13 @@ func interactive(c *openai.Client) ([]openai.ChatCompletionMessage, error) {
 				Messages: messages,
 			})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s", err)
-			break
+			return err
 		}
 
 		messages = append(messages, resp.Choices[0].Message)
-		fmt.Printf("agent: %s\n\n", resp.Choices[0].Message.Content)
+		t = fmt.Sprintf("agent: %s\n", resp.Choices[0].Message.Content)
+		fmt.Print(t)
+		writeFile(outFile, t)
+		fmt.Print("user: ")
 	}
-	return messages, nil
 }
