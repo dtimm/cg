@@ -83,8 +83,8 @@ func interactive(c *openai.Client, outFile string) error {
 	messages := []openai.ChatCompletionMessage{}
 
 	fmt.Print("user: ")
+	scanner := bufio.NewScanner(os.Stdin)
 	for {
-		scanner := bufio.NewScanner(os.Stdin)
 		var inputLines []string
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -94,6 +94,9 @@ func interactive(c *openai.Client, outFile string) error {
 			inputLines = append(inputLines, line)
 			t := scanner.Text()
 			writeFile(outFile, fmt.Sprintf("user: %s", t))
+		}
+		if scanner.Err() != nil {
+			return scanner.Err()
 		}
 
 		t := strings.Join(inputLines, "\n")
